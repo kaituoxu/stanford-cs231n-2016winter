@@ -1,0 +1,4 @@
+anaconda2
+path.sh
+*.pyc
+.ipynb_checkpoints
