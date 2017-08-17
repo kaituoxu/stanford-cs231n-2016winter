@@ -9,9 +9,9 @@ def load_CIFAR_batch(filename):
     datadict = pickle.load(f)
     X = datadict['data']
     Y = datadict['labels']
-    print X.shape
+    # print X.shape
     X = X.reshape(10000, 3, 32, 32).transpose(0,2,3,1).astype("float")
-    print X.shape
+    # print X.shape
     Y = np.array(Y)
     return X, Y
 

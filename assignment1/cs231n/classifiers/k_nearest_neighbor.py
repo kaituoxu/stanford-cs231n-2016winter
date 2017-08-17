@@ -73,7 +73,7 @@ class KNearestNeighbor(object):
         # training point, and store the result in dists[i, j]. You should   #
         # not use a loop over dimension.                                    #
         #####################################################################
-        dists[i, j] = np.sqrt(np.sum((X[i] - self.X_train[j]) ** 2))
+        dists[i, j] = np.sqrt(np.sum((X[i, :] - self.X_train[j, :]) ** 2))
         #####################################################################
         #                       END OF YOUR CODE                            #
         #####################################################################
@@ -97,7 +97,8 @@ class KNearestNeighbor(object):
       # Compute the l2 distance between the ith test point and all training #
       # points, and store the result in dists[i, :].                        #
       #######################################################################
-      dists[i, :] = np.sqrt(np.sum((self.X_train - X[i, :]) ** 2, axis=1))
+      # dists[i, :] = np.sqrt(np.sum((self.X_train - X[i, :]) ** 2, axis=1)) # broadcast
+      dists[i, :] = np.sqrt(np.sum(np.square((self.X_train - X[i, :])), axis=1)) # broadcast
       #######################################################################
       #                         END OF YOUR CODE                            #
       #######################################################################
@@ -127,9 +128,15 @@ class KNearestNeighbor(object):
     #       and two broadcast sums.                                         #
     #########################################################################
     start_time = time.time()
-    dists = np.sqrt(np.sum((np.reshape(X, (X.shape[0], 1, X.shape[1])) - self.X_train)**2, axis=2))
+    # The below also works, but it is very slow
+    # dists = np.sqrt(np.sum((np.reshape(X, (X.shape[0], 1, X.shape[1])) - self.X_train)**2, axis=2))
+
+    # The below comes from (x-y)^2 = x^2 + y^2 - 2xy, and it is very fast
+    X_square_sum = np.sum(np.square(X), axis=1) # num_test x 1
+    X_train_square_sum = np.sum(np.square(self.X_train), axis=1) # num_train x 1
+    inner_product = np.dot(X, self.X_train.T) # num_test x num_train
+    dists = np.sqrt(np.reshape(X_square_sum, (-1, 1)) + X_train_square_sum - 2*inner_product) # broadcast
     print "spend", time.time() - start_time, "seconds"
-    pass
     #########################################################################
     #                         END OF YOUR CODE                              #
     #########################################################################
@@ -161,7 +168,7 @@ class KNearestNeighbor(object):
       # neighbors. Store these labels in closest_y.                           #
       # Hint: Look up the function numpy.argsort.                             #
       #########################################################################
-      closest_y = self.y_train[np.argsort(dists[i])[:k]]
+      closest_y = self.y_train[np.argsort(dists[i, :])[:k]]
       #########################################################################
       # TODO:                                                                 #
       # Now that you have found the labels of the k nearest neighbors, you    #
@@ -169,8 +176,10 @@ class KNearestNeighbor(object):
       # Store this label in y_pred[i]. Break ties by choosing the smaller     #
       # label.                                                                #
       #########################################################################
-      unique, counts = np.unique(closest_y, return_counts=True)
-      y_pred[i] = unique[np.argmax(counts)]
+      y_pred[i] = np.argmax(np.bincount(closest_y)) # understand why this work
+      # The below also works
+      # unique, counts = np.unique(closest_y, return_counts=True)
+      # y_pred[i] = unique[np.argmax(counts)]
       #########################################################################
       #                           END OF YOUR CODE                            # 
       #########################################################################
