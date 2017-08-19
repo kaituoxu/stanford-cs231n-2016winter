@@ -29,7 +29,26 @@ def softmax_loss_naive(W, X, y, reg):
   # here, it is easy to run into numeric instability. Don't forget the        #
   # regularization!                                                           #
   #############################################################################
-  pass
+  num_train = X.shape[0]
+  num_classes =  W.shape[1]
+  for i in range(num_train):
+    # loss
+    scores = X[i].dot(W) # 1 x C
+    scores -= np.max(scores) # for numeric stability, see the leture notes
+    softmax = np.exp(scores)/np.sum(np.exp(scores)) # 1 x C
+    loss += -np.log(softmax[y[i]])
+    # gradient
+    softmax[y[i]] -= 1
+    dW += np.outer(X[i], softmax)
+    # Above equals np.dot(X[i].T, softmax), but np.dot(X[i].T, softmax) doesn't
+    # work in numpy, use below code as replacement.
+    # dW += np.dot(np.reshape(X[i], (-1,1)), np.reshape(softmax, (1, -1)))
+  # loss
+  loss /= num_train
+  loss += 0.5 * reg * np.sum(W * W)
+  # gradient
+  dW /= num_train
+  dW += reg * W
   #############################################################################
   #                          END OF YOUR CODE                                 #
   #############################################################################
@@ -53,7 +72,20 @@ def softmax_loss_vectorized(W, X, y, reg):
   # here, it is easy to run into numeric instability. Don't forget the        #
   # regularization!                                                           #
   #############################################################################
-  pass
+  num_train = X.shape[0]
+  arange = np.arange(num_train)
+  # loss
+  scores = X.dot(W) # N x C
+  scores -= np.reshape(np.max(scores, axis=1), (-1, 1)) # for numeric stability
+  softmax = np.exp(scores) / np.reshape(np.sum(np.exp(scores), axis=1), (-1, 1))
+  loss = np.sum(-np.log(softmax[arange, y]))
+  loss /= num_train
+  loss += 0.5 * reg * np.sum(W * W)
+  # gradient
+  softmax[arange, y] -= 1 # N x C
+  dW = np.dot(X.T, softmax) # Try to understand this vectorized formula
+  dW /= num_train
+  dW += reg * W
   #############################################################################
   #                          END OF YOUR CODE                                 #
   #############################################################################
