@@ -170,7 +170,7 @@ class TwoLayerNet(object):
       #########################################################################
       i = it % iterations_per_epoch
       if i == 0:
-        print "shuffling data", it
+        # print "shuffling data", it
         all_idxs = np.random.choice(num_train, num_train, replace=False)
       idxs = all_idxs[i*batch_size : (i+1)*batch_size]
 
