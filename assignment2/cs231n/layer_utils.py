@@ -2,6 +2,28 @@ from cs231n.layers import *
 from cs231n.fast_layers import *
 
 
+def affine_batchnorm_relu_forward(x, w, b, gamma, beta, bn_param):
+  """
+  TODO: string doc.
+  """
+  a, fc_cache = affine_forward(x, w, b)
+  bn, bn_cache = batchnorm_forward(a, gamma, beta, bn_param)
+  out, relu_cache = relu_forward(bn)
+  cache = (fc_cache, bn_cache, relu_cache)
+  return out, cache
+
+
+def affine_batchnorm_relu_backward(dout, cache):
+  """
+  TODO: string doc
+  """
+  fc_cache, bn_cache, relu_cache = cache
+  dbn = relu_backward(dout, relu_cache)
+  da, dgamma, dbeta = batchnorm_backward(dbn, bn_cache)
+  dx, dw, db = affine_backward(da, fc_cache)
+  return dx, dw, db, dgamma, dbeta
+
+
 def affine_relu_forward(x, w, b):
   """
   Convenience layer that perorms an affine transform followed by a ReLU
