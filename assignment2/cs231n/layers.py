@@ -459,7 +459,7 @@ def conv_backward_naive(dout, cache):
           for j in range(wo_beg, wo_end):
             dx[:, c, i, j] += np.dot(dout[:, :, ho, wo], w[:, c, i-ho_beg, j-wo_beg])
             for f in xrange(F):
-              dw[f,c,i-ho_beg,j-wo_beg] += np.sum(dout[:,f,ho,wo] * xpad[:,c,i,j])
+              dw[f, c, i-ho_beg, j-wo_beg] += np.sum(dout[: , f, ho, wo] * xpad[:, c, i, j])
   db = np.sum(dout, axis=(0, 2, 3))
   dx = dx[:, :, pad:-pad, pad:-pad]
   #############################################################################
@@ -537,7 +537,7 @@ def max_pool_backward_naive(dout, cache):
       pmax = np.max(x[:, :, ho_beg:ho_end, wo_beg:wo_end], axis=(2,3))
       for i in range(ho_beg, ho_end):
         for j in range(wo_beg, wo_end):
-          mask[:, :, i, j] = x[:, :, i, j] == pmax
+          mask[:, :, i, j] = (x[:, :, i, j] == pmax)
           dx[:, :, i, j] += mask[:, :, i, j] * dout[:, :, ho, wo]
   #############################################################################
   #                             END OF YOUR CODE                              #
@@ -576,7 +576,34 @@ def spatial_batchnorm_forward(x, gamma, beta, bn_param):
   # version of batch normalization defined above. Your implementation should  #
   # be very short; ours is less than five lines.                              #
   #############################################################################
-  pass
+  mode = bn_param['mode']
+  eps = bn_param.get('eps', 1e-5)
+  momentum = bn_param.get('momentum', 0.9)
+
+  N, C, H, W = x.shape
+  running_mean = bn_param.get('running_mean', np.zeros(C, dtype=x.dtype))
+  running_var = bn_param.get('running_var', np.zeros(C, dtype=x.dtype))
+
+  rs = lambda x: np.reshape(x, (1, -1, 1, 1)) # rs = ReShape
+
+  if mode == 'train':
+    mean = np.mean(x, axis=(0, 2, 3), keepdims=True) # C
+    var = np.var(x, axis=(0, 2, 3), keepdims=True) # C
+    std = np.sqrt(var + eps)
+    x_bn = (x - mean) / std
+    out = rs(gamma) * x_bn + rs(beta)
+    # record mean and var
+    rsb = lambda x: np.reshape(x, (-1,)) # ReShape Back
+    bn_param['running_mean'] = momentum * running_mean + (1-momentum) * rsb(mean)
+    bn_param['running_var'] = momentum * running_var + (1-momentum) * rsb(var)
+
+    cache = x, mean, std, x_bn, gamma, beta
+  elif mode == 'test':
+    mean, var = rs(bn_param['running_mean']), rs(bn_param['running_var'])
+    x_bn = (x - mean) / np.sqrt(var + eps)
+    out = rs(gamma) * x_bn + rs(beta)
+  else:
+    raise ValueError('Invalid forward batchnorm mode "%s"' % mode)
   #############################################################################
   #                             END OF YOUR CODE                              #
   #############################################################################
@@ -606,7 +633,15 @@ def spatial_batchnorm_backward(dout, cache):
   # version of batch normalization defined above. Your implementation should  #
   # be very short; ours is less than five lines.                              #
   #############################################################################
-  pass
+  x, mean, std, x_bn, gamma, beta = cache
+  rs = lambda x: np.reshape(x, (1, -1, 1, 1)) # rs = ReShape
+  mean = lambda x: np.mean(x, axis=(0, 2, 3), keepdims=True)
+
+  dx_bn = dout * rs(gamma)
+
+  dx = (dx_bn - mean(dx_bn) - x_bn * mean(dx_bn*x_bn))/ std
+  dgamma = np.sum(dout * x_bn, axis=(0, 2, 3))
+  dbeta = np.sum(dout, axis=(0, 2, 3))
   #############################################################################
   #                             END OF YOUR CODE                              #
   #############################################################################
