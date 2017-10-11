@@ -181,7 +181,15 @@ def word_embedding_forward(x, W):
   #                                                                            #
   # HINT: This should be very simple.                                          #
   ##############################################################################
-  out = W[x] # look up operation
+  # method 1:
+  # out = W[x] # look up operation
+  # method 2: make the backprop more easy to derive, more easy to understand
+  N, T = x.shape
+  V, D = W.shape
+  out = np.zeros((N, T, D))
+  for n in range(N):
+    for t in range(T):
+      out[n, t, :] = W[x[n, t]]
   cache = x, W
   ##############################################################################
   #                               END OF YOUR CODE                             #
@@ -212,7 +220,13 @@ def word_embedding_backward(dout, cache):
   ##############################################################################
   x, W = cache
   dW = np.zeros_like(W)
-  np.add.at(dW, x, dout)
+  # method 1:
+  # np.add.at(dW, x, dout)
+  # method 2:
+  N, T, D = dout.shape
+  for n in range(N):
+    for t in range(T):
+      dW[x[n,t]] += dout[n, t, :]
   ##############################################################################
   #                               END OF YOUR CODE                             #
   ##############################################################################
