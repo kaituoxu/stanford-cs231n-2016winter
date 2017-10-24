@@ -38,6 +38,12 @@ class TwoLayerNet(object):
     self.params['b1'] = np.zeros(hidden_size)
     self.params['W2'] = std * np.random.randn(hidden_size, output_size)
     self.params['b2'] = np.zeros(output_size)
+    # Update rule: SGD + momentum
+    self.mmt = {}
+    self.mmt['W1'] = np.zeros((input_size, hidden_size))
+    self.mmt['b1'] = np.zeros(hidden_size)
+    self.mmt['W2'] = np.zeros((hidden_size, output_size))
+    self.mmt['b2'] = np.zeros(output_size)
 
   def loss(self, X, y=None, reg=0.0):
     """
@@ -116,8 +122,12 @@ class TwoLayerNet(object):
     dW2 = np.dot(hid1_relu.T, dscores) / N + reg * W2 # H x C
     db2 = np.sum(dscores, axis=0) / N
     dhid1_relu = np.dot(dscores, W2.T) # N x H
-    drelu_daff = np.maximum(np.sign(hid1_affine), 0) # N x H
-    dhid1_affine = drelu_daff * dhid1_relu # element-wise multiply, N x H
+    # method 1
+    # drelu_daff = np.maximum(np.sign(hid1_affine), 0) # N x H
+    # dhid1_affine = drelu_daff * dhid1_relu # element-wise multiply, N x H
+    # method 2
+    dhid1_affine = dhid1_relu
+    dhid1_affine[hid1_affine < 0] = 0
     dW1 = np.dot(X.T, dhid1_affine) / N + reg * W1
     db1 = np.sum(dhid1_affine, axis=0) / N
 
@@ -134,7 +144,7 @@ class TwoLayerNet(object):
   def train(self, X, y, X_val, y_val,
             learning_rate=1e-3, learning_rate_decay=0.95,
             reg=1e-5, num_iters=100,
-            batch_size=200, verbose=False):
+            batch_size=200, verbose=False, mu=0.9):
     """
     Train this neural network using stochastic gradient descent.
 
@@ -191,7 +201,9 @@ class TwoLayerNet(object):
       # stored in the grads dictionary defined above.                         #
       #########################################################################
       for (k, grad) in grads.items():
-        self.params[k] += -learning_rate * grad
+        # hard code mu = 0.9
+        self.mmt[k] = mu * self.mmt[k] - learning_rate * grad
+        self.params[k] += self.mmt[k]  # -learning_rate * grad
       #########################################################################
       #                             END OF YOUR CODE                          #
       #########################################################################
