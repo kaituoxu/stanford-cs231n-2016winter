@@ -120,6 +120,7 @@ def sru_step_forward_fast(x, prev_c, W, bf, br):
     """
     Inputs:
     - x: (N, D)
+    - W: (D, 4*H)
     """
     a = x.dot(W)
     ax, af, ar, ah = np.array_split(a, 4, axis=1)
@@ -157,8 +158,133 @@ def sru_step_backward_fast(dh, dnext_c, cache):
     return dx, dpc, dW, dbf, dbr
 
 
-def sru_forward_fast():
-    pass
+def sru_forward_fast(x, W, bf, br):
+    """
+    Inputs:
+    - x: (N, T, D)
+    - W: (D, 4*H)
+    """
+    N, T, D = x.shape
+    H = W.shape[1] // 4
+    h = np.zeros((T, N, H))  # at the end, np.transpose(h, (1, 0, 2))
+    cache = []
 
-def sru_backward_fast():
-    pass
+    xt = np.transpose(x, (1, 0, 2))  # T, N, D
+    x2d = np.reshape(xt, (-1, x.shape[-1]))  # NTxD
+    a = x2d.dot(W)  # NTx4H
+    prev_c = np.zeros((N, H))
+    for t in range(T):  # 0, 1, ... , T-1
+        ######
+        # every step INPUT: at, prev_c
+        ######
+        at = a[t*N:(t+1)*N, :]  # Nx4H
+        ax, af, ar, ah = np.array_split(at, 4, axis=1)
+        af = af + bf
+        ar = ar + br
+        f = sigmoid(af)
+        r = sigmoid(ar)
+        next_c = f * prev_c + (1 - f) * ax
+        gc = next_c
+        h[t] = r * gc + (1 - r) * ah  # NxH
+        cache.append((prev_c, ax, ah, f, r, gc))
+        ######
+        # every step OUTPUT: h[t], next_c, cache[t]
+        ######
+        # remember state c
+        prev_c = next_c
+    h = np.transpose(h, (1, 0, 2))  # N, T, H
+    cache.append((x2d, a, W, bf, br))  # the last element
+    return h, cache
+
+def sru_backward_fast(dh, cache):
+    """
+    Inputs:
+    - dh: (N, T, H)
+    """
+    N, T, H = dh.shape
+    D = cache[-1][0].shape[-1]
+    dc0 = np.zeros((N, H))
+    dW = np.zeros((D, 4*H))
+    dbf = np.zeros((H))
+    dbr = np.zeros((H))
+
+    da = np.zeros((T*N, 4*H))
+
+    dht = np.transpose(dh, (1, 0, 2))  # T, N, H
+    dh2d = np.reshape(dht, (-1, dh.shape[-1]))  # NTxH
+    dnext_c = np.zeros((N, H))
+    for t in xrange(T-1, -1, -1): # t = T-1, T-2, ..., 0
+        pc, ax, ah, f, r, gc = cache[t]
+        dh = dh2d[t*N:(t+1)*N, :]  # NxH
+
+        dr = dh * (gc - ah)
+        dgc = dh * r
+        dah = dh * (1 - r)
+        dnc = dgc + dnext_c
+
+        df = dnc * (pc - ax)
+        dpc = dnc * f
+        dax = dnc * (1 - f)
+        dar = dr * (1 - r) * r
+        daf = df * (1 - f) * f
+        
+        da[t*N:(t+1)*N] = np.hstack((dax, daf, dar, dah))
+
+        dnext_c = dpc
+    x2d, a, W, bf, br = cache[-1]
+    dx = da.dot(W.T)  # NTxD
+    dW = np.dot(x2d.T, da)
+    dbf = da[:, H:2*H].sum(axis=0)
+    dbr = da[:, 2*H:3*H].sum(axis=0)
+
+    dx = np.reshape(dx, (T, N, D))
+    dx = np.transpose(dx, (1, 0, 2))  # N, T, H
+    return dx, dW, dbf, dbr
+
+
+def sru_backward_fast_advance(dh, cache):
+    """
+    Inputs:
+    - dh: (N, T, H)
+    """
+    N, T, H = dh.shape
+    D = cache[-1][0].shape[-1]
+    dc0 = np.zeros((N, H))
+    dW = np.zeros((D, 4*H))
+    dbf = np.zeros((H))
+    dbr = np.zeros((H))
+
+    da = np.zeros((T*N, 4*H))
+
+    dht = np.transpose(dh, (1, 0, 2))  # T, N, H
+    dh2d = np.reshape(dht, (-1, dh.shape[-1]))  # NTxH
+    dnc = np.zeros((N, H))
+    next_f = np.zeros((N, H))
+    for t in xrange(T-1, -1, -1):  # t = T-1, T-2, ..., 0
+        pc, ax, ah, f, r, gc = cache[t]
+        dh = dh2d[t*N:(t+1)*N, :]  # NxH
+
+        dr = dh * (gc - ah)
+        dgc = dh * r
+        dah = dh * (1 - r)
+        dnc = dnc * next_f
+        dnc += dgc
+        # advance dnc
+
+        df = dnc * (pc - ax)
+        # dpc = dnc * f
+        dax = dnc * (1 - f)
+        dar = dr * (1 - r) * r
+        daf = df * (1 - f) * f
+        
+        da[t*N:(t+1)*N] = np.hstack((dax, daf, dar, dah))
+        next_f = f
+    x2d, a, W, bf, br = cache[-1]
+    dx = da.dot(W.T)  # NTxD
+    dW = np.dot(x2d.T, da)
+    dbf = da[:, H:2*H].sum(axis=0)
+    dbr = da[:, 2*H:3*H].sum(axis=0)
+
+    dx = np.reshape(dx, (T, N, D))
+    dx = np.transpose(dx, (1, 0, 2))  # N, T, H
+    return dx, dW, dbf, dbr
