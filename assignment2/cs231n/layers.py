@@ -236,6 +236,8 @@ def batchnorm_backward(dout, cache):
   dx_bn = dout * gamma
   dvar = np.sum(dx_bn * (x - mean) * (-0.5) / (std * std * std), axis=0)
   dmean = np.sum(dx_bn / (-std), axis=0)
+  # the right formula should include the second part, but the second part is zero.
+  # dmean = np.sum(dx_bn / (-std), axis=0) + dvar*(-2.0/m)*np.sum(x-mean, axis=0)
 
   # return 
   dx = dx_bn/std + dvar*2*(x-mean)/m + dmean/m
