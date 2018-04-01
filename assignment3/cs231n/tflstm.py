@@ -311,3 +311,385 @@ def lstm_backward(dh, cache):
   return dx, dh0, dWx, dWh, db
 
 
+def tflstm_forward(x, h0, Wx, Wh, Wk, b, F, S):
+  """
+  Forward pass for an LSTM over an entire sequence of data. We assume an input
+  sequence composed of T vectors, each of dimension D. The LSTM uses a hidden
+  size of H, and we work over a minibatch containing N sequences. After running
+  the LSTM forward, we return the hidden states for all timesteps.
+  
+  Note that the initial cell(hidden?) state is passed as input, but the initial cell
+  state is set to zero. Also note that the cell state is not returned; it is
+  an internal variable to the LSTM and is not accessed from outside.
+  
+  Inputs:
+  - x: Input data of shape (N, T, D)
+  - h0: Initial hidden state of shape (N, H)
+  - Wx: Weights for input-to-hidden connections, of shape (D, 4H)
+  - Wh: Weights for hidden-to-hidden connections, of shape (H, 4H)
+  - b: Biases of shape (4H,)
+  
+  Returns a tuple of:
+  - h: Hidden states for all timesteps of all sequences, of shape (N, T, H)
+  - cache: Values needed for the backward pass.
+  """
+  h, cache = None, None
+  #############################################################################
+  # TODO: Implement the forward pass for an LSTM over an entire timeseries.   #
+  # You should use the lstm_step_forward function that you just defined.      #
+  #############################################################################
+  N, T, D = x.shape
+
+  cache = []
+
+  B = (D-F)/S+1
+  _, H = h0.shape
+  H = H / B
+  h = np.zeros((N, T, B*H))
+  prev_h = h0
+  prev_c = np.zeros((N, B*H))
+  for t in xrange(T):
+    prev_k = np.zeros((N, H))
+    cc_t = []
+    for b in xrange(B):
+      # Get inputs
+      xtk = x[:,t,b*S:b*S+F] # NxF
+      bdh = prev_h[:,b*H:(b+1)*H] # NxH, b = block
+      bdc = prev_c[:,b*H:(b+1)*H] # NxH
+
+      a = np.dot(xtk, Wx) + np.dot(bdh, Wh) + np.dot(prev_k, Wk) + b
+      ai, af, ao, ag = np.array_split(a, 4, axis=1)
+      i = sigmoid(ai)
+      f = sigmoid(af)
+      o = sigmoid(ao)
+      g = np.tanh(ag)
+      ctk = f * bdc + i * g
+      tc = np.tanh(ctk)
+      htk = o * tc
+      cc_tk = (xtk, bdh, bdc, prev_k, Wx, Wh, Wk, i, f, o, g, tc)
+      h[:,t,b*H:(b+1)*H] = htk
+      prev_h[:,b*H:(b+1)*H] = htk
+      prev_c[:,b*H:(b+1)*H] = ctk
+      prev_k = htk
+      cc_t.append(cc_tk)
+    cache.append(cc_t)
+  ##############################################################################
+  #                               END OF YOUR CODE                             #
+  ##############################################################################
+  cache.append((D, F, S))
+  return h, cache
+
+
+def tflstm_backward_advance(dh, cache):
+  dx, dh0, dWx, dWh, dWk, db = None, None, None, None, None, None
+  N, T, H = dh.shape  # H = H / B
+  D, F, S = cache[-1]
+  B = (D-F)/S+1
+  H = H / B
+
+  dx = np.zeros((N, T, D))
+  dh0 = np.zeros((N, B*H))
+  dWx = np.zeros((F, 4*H))
+  dWh = np.zeros((H, 4*H))
+  dWk = np.zeros((H, 4*H))
+  db = np.zeros(4*H)
+
+  dnext_ct = np.zeros((N, B*H))
+  dnext_at = np.zeros((N, B*4*H))
+  next_f = np.zeros((N, B*H))
+
+  for t in xrange(T-1, -1, -1): # t = T-1, T-2, ..., 0
+    cc_t = cache[t]
+    dnext_k = np.zeros((N, H))
+    dnext_ak = np.zeros((N, 4*H))
+    for b in xrange(B-1, -1, -1): # b = B-1, B-2, ..., 0
+      xtk, bdh, bdc, prev_k, Wx, Wh, Wk, i, f, o, g, tc = cc_t[b]
+
+      dnext_htk = dh[:, t, b*H:(b+1)*H]
+      dnext_htk = dnext_htk + np.dot(dnext_at[:, b*4*H:(b+1)*4*H], Wh.T) + np.dot(dnext_ak, Wk.T)
+
+      dhtk = dnext_htk * o * (1-tc**2)  # dctk
+
+      do = dnext_htk * tc
+      dao = do * o * (1-o)
+
+      dctk = dhtk
+      dctk = dctk + dnext_ct[:,b*H:(b+1)*H] * next_f[:,b*H:(b+1)*H]
+
+      dg = dctk * i
+      df = dctk * bdc
+      di = dctk * g
+
+      dai = di * i * (1-i)
+      daf = df * f * (1-f)
+      dag = dg * (1-g**2)
+      da = np.hstack((dai, daf, dao, dag))
+
+      dnext_ct[:, b*H:(b+1)*H] = dctk
+      dnext_at[:, b*4*H:(b+1)*4*H] = da
+      next_f[:, b*H:(b+1)*H] = f
+      dnext_ak = da
+
+      dxtk = np.dot(da, Wx.T) # NxF
+      dWxtk = np.dot(xtk.T, da) # FxN dot Nx4H = Fx4H
+      dWhtk = np.dot(bdh.T, da)
+      dWktk = np.dot(prev_k.T, da)
+      dbtk = da.sum(axis=0)
+      dx[:,t,b*S:b*S+F] += dxtk
+      dWx += dWxtk
+      dWh += dWhtk
+      dWk += dWktk
+      db += dbtk
+   #dh0 = dnext_h
+  return dx, dh0, dWx, dWh, dWk, db
+
+
+def tflstm_forward_origin(x, h0, Wx, Wh, Wk, b, F, S):
+  """
+  Forward pass for an LSTM over an entire sequence of data. We assume an input
+  sequence composed of T vectors, each of dimension D. The LSTM uses a hidden
+  size of H, and we work over a minibatch containing N sequences. After running
+  the LSTM forward, we return the hidden states for all timesteps.
+  
+  Note that the initial cell(hidden?) state is passed as input, but the initial cell
+  state is set to zero. Also note that the cell state is not returned; it is
+  an internal variable to the LSTM and is not accessed from outside.
+  
+  Inputs:
+  - x: Input data of shape (N, T, D)
+  - h0: Initial hidden state of shape (N, H)
+  - Wx: Weights for input-to-hidden connections, of shape (D, 4H)
+  - Wh: Weights for hidden-to-hidden connections, of shape (H, 4H)
+  - b: Biases of shape (4H,)
+  
+  Returns a tuple of:
+  - h: Hidden states for all timesteps of all sequences, of shape (N, T, H)
+  - cache: Values needed for the backward pass.
+  """
+  h, cache = None, None
+  #############################################################################
+  # TODO: Implement the forward pass for an LSTM over an entire timeseries.   #
+  # You should use the lstm_step_forward function that you just defined.      #
+  #############################################################################
+  N, T, D = x.shape
+
+  cache = []
+
+  B = (D-F)/S+1
+  _, H = h0.shape
+  H = H / B
+  h = np.zeros((N, T, B*H))
+  prev_h = h0
+  prev_c = np.zeros((N, B*H))
+  for t in xrange(T):
+    prev_k = np.zeros((N, H))
+    cc_t = []
+    for b in xrange(B):
+      # Get inputs
+      xtk = x[:,t,b*S:b*S+F] # NxF
+      bdh = prev_h[:,b*H:(b+1)*H] # NxH, b = block
+      bdc = prev_c[:,b*H:(b+1)*H] # NxH
+
+      a = np.dot(xtk, Wx) + np.dot(bdh, Wh) + np.dot(prev_k, Wk) + b
+      ai, af, ao, ag = np.array_split(a, 4, axis=1)
+      i = sigmoid(ai)
+      f = sigmoid(af)
+      o = sigmoid(ao)
+      g = np.tanh(ag)
+      ctk = f * bdc + i * g
+      tc = np.tanh(ctk)
+      htk = o * tc
+      cc_tk = (xtk, bdh, bdc, prev_k, Wx, Wh, Wk, i, f, o, g, tc)
+      h[:,t,b*H:(b+1)*H] = htk
+      prev_h[:,b*H:(b+1)*H] = htk
+      prev_c[:,b*H:(b+1)*H] = ctk
+      prev_k = htk
+      cc_t.append(cc_tk)
+    cache.append(cc_t)
+  ##############################################################################
+  #                               END OF YOUR CODE                             #
+  ##############################################################################
+  cache.append((D, F, S))
+  return h, cache
+
+
+def tflstm_backward_advance_origin(dh, cache):
+  dx, dh0, dWx, dWh, dWk, db = None, None, None, None, None, None
+  N, T, H = dh.shape  # H = H / B
+  D, F, S = cache[-1]
+  B = (D-F)/S+1
+  H = H / B
+
+  dx = np.zeros((N, T, D))
+  dh0 = np.zeros((N, B*H))
+  dWx = np.zeros((F, 4*H))
+  dWh = np.zeros((H, 4*H))
+  dWk = np.zeros((H, 4*H))
+  db = np.zeros(4*H)
+
+  dnext_ht = np.zeros((N, B*H))
+  dnext_ct = np.zeros((N, B*H))
+
+  for t in xrange(T-1, -1, -1): # t = T-1, T-2, ..., 0
+    cc_t = cache[t]
+    dnext_hk = np.zeros((N, H))
+    for b in xrange(B-1, -1, -1): # b = B-1, B-2, ..., 0
+      xtk, prev_ht, prev_c, prev_hk, Wx, Wh, Wk, itk, ftk, otk, gtk, tctk = cc_t[b]
+      dhtk = dh[:,t,b*H:(b+1)*H] + dnext_ht[:,b*H:(b+1)*H] + dnext_hk
+      dtctk = dhtk * otk
+      dctk = dnext_ct[:,b*H:(b+1)*H]
+      dctk = dctk + dtctk * (1-tctk**2)
+
+      dgtk = dctk * itk
+      dotk = dhtk * tctk
+      dftk = dctk * prev_c
+      ditk = dctk * gtk
+
+      daitk = ditk * itk * (1-itk)
+      daftk = dftk * ftk * (1-ftk)
+      daotk = dotk * otk * (1-otk)
+      dagtk = dgtk * (1-gtk**2)
+      datk = np.hstack((daitk, daftk, daotk, dagtk))
+
+      dxtk = np.dot(datk, Wx.T)
+      dprev_ht = np.dot(datk, Wh.T)
+      dprev_c = dctk * ftk
+      dprev_hk = np.dot(datk, Wk.T)
+      dnext_ht[:,b*H:(b+1)*H] = dprev_ht
+      dnext_ct[:,b*H:(b+1)*H] = dprev_c
+      dnext_hk = dprev_hk
+      dx[:,t,b*S:b*S+F] += dxtk
+      dWx += np.dot(xtk.T, datk)
+      dWh += np.dot(prev_ht.T, datk)
+      dWk += np.dot(prev_hk.T, datk)
+      db += datk.sum(axis=0)
+  dh0 = dnext_ht
+  return dx, dh0, dWx, dWh, db
+
+
+
+def tflstm_forward_origin_step(x, prev_h, prev_c, Wx, Wh, Wk, bias, F, S, H):
+  N, D = x.shape
+  B = (D-F)/S+1
+
+  cache = []
+
+  next_h = np.zeros((N, B*H))
+  next_c = np.zeros((N, B*H))
+  prev_k = np.zeros((N, H))
+  for b in xrange(B):
+    # Get inputs
+    xtk = x[:,b*S:b*S+F] # NxF
+    bdh = prev_h[:,b*H:(b+1)*H] # NxH, b = block
+    bdc = prev_c[:,b*H:(b+1)*H] # NxH
+
+    a = np.dot(xtk, Wx) + np.dot(bdh, Wh) + np.dot(prev_k, Wk) + bias
+    ai, af, ao, ag = np.array_split(a, 4, axis=1)
+    i = sigmoid(ai)
+    f = sigmoid(af)
+    o = sigmoid(ao)
+    g = np.tanh(ag)
+    ctk = f * bdc + i * g
+    tc = np.tanh(ctk)
+    htk = o * tc
+
+    cc_tk = (xtk, bdh, bdc, prev_k, Wx, Wh, Wk, i, f, o, g, tc)
+    next_h[:,b*H:(b+1)*H] = htk.copy()
+    next_c[:,b*H:(b+1)*H] = ctk.copy()
+    prev_k = htk.copy()
+    cache.append(cc_tk)
+  cache.append((D, F, S, H))
+  return next_h, next_c, cache
+
+
+def tflstm_backward_advance_origin_step(dnext_h, dnext_c, cache):
+  N = dnext_h.shape[0]
+  D, F, S, H = cache[-1]
+  B = (D-F)/S+1
+
+  dx = np.zeros((N, D))
+  dh = np.zeros((N, B*H))
+  dc = np.zeros((N, B*H))
+  dWx = np.zeros((F, 4*H))
+  dWh = np.zeros((H, 4*H))
+  dWk = np.zeros((H, 4*H))
+  db = np.zeros(4*H)
+
+  dnext_hk = np.zeros((N, H))
+  for b in xrange(B-1, -1, -1): # b = B-1, B-2, ..., 0
+    xtk, prev_ht, prev_c, prev_hk, Wx, Wh, Wk, itk, ftk, otk, gtk, tctk = cache[b]
+    dhtk = dnext_h[:,b*H:(b+1)*H] + dnext_hk
+    dtctk = dhtk * otk
+    dctk = dnext_c[:,b*H:(b+1)*H]
+    dctk = dctk + dtctk * (1-tctk**2)
+
+    dgtk = dctk * itk
+    dotk = dhtk * tctk
+    dftk = dctk * prev_c
+    ditk = dctk * gtk
+
+    daitk = ditk * itk * (1-itk)
+    daftk = dftk * ftk * (1-ftk)
+    daotk = dotk * otk * (1-otk)
+    dagtk = dgtk * (1-gtk**2)
+    datk = np.hstack((daitk, daftk, daotk, dagtk))
+
+    dxtk = np.dot(datk, Wx.T)
+    dprev_ht = np.dot(datk, Wh.T)
+    dprev_c = dctk * ftk
+    dprev_hk = np.dot(datk, Wk.T)
+    dh[:,b*H:(b+1)*H] = dprev_ht.copy()
+    dc[:,b*H:(b+1)*H] = dprev_c.copy()
+    dnext_hk = dprev_hk.copy()
+    dx[:,b*S:b*S+F] += dxtk.copy()
+    dWx += np.dot(xtk.T, datk)
+    dWh += np.dot(prev_ht.T, datk)
+    dWk += np.dot(prev_hk.T, datk)
+    db = db + datk.sum(axis=0)
+  return dx, dh, dc, dWx, dWh, dWk, db
+
+
+def tflstm_forward_origin2(x, h0, Wx, Wh, Wk, bias, F, S, H):
+  N, T, D = x.shape
+  B = (D-F)/S+1
+
+  h = np.zeros((N, T, B*H))
+  cache = []
+
+  prev_h = h0
+  prev_c = np.zeros((N, B*H))
+  for t in xrange(T):
+    h[:,t,:], nc, cc_t = tflstm_forward_origin_step(x[:,t,:], prev_h, prev_c, Wx, Wh, Wk, bias, F, S, H)
+    prev_h, prev_c = h[:,t,:], nc
+    cache.append(cc_t)
+  cache.append((D, F, S, H))
+  return h, cache
+
+
+def tflstm_backward_advance_origin2(dh, cache):
+  N, T, _ = dh.shape
+  D, F, S, H = cache[-1]
+  B = (D-F)/S+1
+
+  dx = np.zeros((N, T, D))
+  dh0 = np.zeros((N, B*H))
+  dWx = np.zeros((F, 4*H))
+  dWh = np.zeros((H, 4*H))
+  dWk = np.zeros((H, 4*H))
+  db = np.zeros(4*H)
+
+  dnext_h = np.zeros((N, B*H))
+  dnext_c = np.zeros((N, B*H))
+  for t in xrange(T-1, -1, -1):
+    dxt, dprev_h, dprev_c, dWxt, dWht, dWkt, dbt = \
+        tflstm_backward_advance_origin_step(dnext_h + dh[:,t,:], dnext_c, cache[t])
+    dnext_h, dnext_c = dprev_h, dprev_c
+    dx[:,t,:] = dxt
+    dWx += dWxt
+    dWh += dWht
+    dWk += dWkt
+    db += dbt
+  dh0 = dnext_h
+  return dx, dh0, dWx, dWh, dWk, db
+
+
