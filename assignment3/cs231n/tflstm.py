@@ -144,7 +144,18 @@ def lstm_forward(x, h0, Wx, Wh, b):
   prev_h = h0
   prev_c = np.zeros((N, H))
   for t in xrange(T):
-    h[:,t,:], nc, cc_t = lstm_step_forward(x[:,t,:], prev_h, prev_c, Wx, Wh, b)
+    xt = x[:,t,:]
+    a = np.dot(xt, Wx) + np.dot(prev_h, Wh) + b
+    ai, af, ao, ag = np.array_split(a, 4, axis=1)
+    i = sigmoid(ai)
+    f = sigmoid(af)
+    o = sigmoid(ao)
+    g = np.tanh(ag)
+    next_c = f * prev_c + i * g
+    tnext_c = np.tanh(next_c)
+    next_h = o * tnext_c
+    cc_t = (xt, prev_h, prev_c, Wx, Wh, i, f, o, g, tnext_c)
+    h[:,t,:], nc = next_h, next_c
     prev_h, prev_c = h[:,t,:], nc
     cache.append(cc_t)
   ##############################################################################
