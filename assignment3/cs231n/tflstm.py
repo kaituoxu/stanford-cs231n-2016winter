@@ -917,7 +917,7 @@ def tflstm_forward_origin2_pp_unfold(x, h0, Wx, Wh, Wk, bias, pi, pf, po, F, S, 
       bdc = prev_c[:,b*H:(b+1)*H] # NxH
   
       a = np.dot(xtk, Wx) + np.dot(bdh, Wh) + np.dot(prev_k, Wk) + bias
-      ai, af, ao, ag = np.array_split(a, 4, axis=1)
+      ag, ai, af, ao = np.array_split(a, 4, axis=1)
       i = sigmoid(ai + bdc * pi)
       f = sigmoid(af + bdc * pf)
       g = np.tanh(ag)
@@ -938,4 +938,76 @@ def tflstm_forward_origin2_pp_unfold(x, h0, Wx, Wh, Wk, bias, pi, pf, po, F, S, 
     cache.append(cachet)
   cache.append((D, F, S, H))
   return h, cache
+
+
+
+# format these formulas like the Kaldi nnet1 way
+def tflstm_backward_pp_advance(dh, cache):
+  N, T, _ = dh.shape
+  D, F, S, H = cache[-1]
+  B = (D-F)/S+1
+
+  dx = np.zeros((N, T, D))
+  dh0 = np.zeros((N, B*H))
+  dWx = np.zeros((F, 4*H))
+  dWh = np.zeros((H, 4*H))
+  dWk = np.zeros((H, 4*H))
+  db = np.zeros(4*H)
+  dpi = np.zeros(H)
+  dpf = np.zeros(H)
+  dpo = np.zeros(H)
+
+  dnext_at = np.zeros((N, B*4*H))
+  dnext_ctk = np.zeros((N, B*H))
+  dnext_aitk = np.zeros((N, B*H))
+  dnext_aftk = np.zeros((N, B*H))
+  next_ftk = np.zeros((N, B*H))
+
+  for t in xrange(T-1, -1, -1):
+    cachet = cache[t]
+    dnext_atk = np.zeros((N, 4*H))
+    for b in xrange(B-1, -1, -1): # b = B-1, B-2, ..., 0
+      xtk, prev_ht, prev_c, prev_hk, Wx, Wh, Wk, pi, pf, po, itk, ftk, otk, gtk, tctk, ctk = cachet[b]
+
+      dhtk = dh[:,t,b*H:(b+1)*H] + np.dot(dnext_at[:,b*4*H:(b+1)*4*H], Wh.T) + np.dot(dnext_atk, Wk.T)
+  
+      dtctk = dhtk * otk
+      dtctk = dtctk * (1-tctk**2)
+
+      dotk = dhtk * tctk
+      daotk = dotk * otk * (1-otk)
+
+      dctk = dtctk
+      dctk += dnext_ctk[:,b*H:(b+1)*H] * next_ftk[:,b*H:(b+1)*H] + dnext_aitk[:,b*H:(b+1)*H] * pi + dnext_aftk[:,b*H:(b+1)*H] * pf
+      dctk += daotk * po
+
+      dftk = dctk * prev_c
+      daftk = dftk * ftk * (1-ftk)
+      ditk = dctk * gtk
+      daitk = ditk * itk * (1-itk)
+      dgtk = dctk * itk
+      dagtk = dgtk * (1-gtk**2)
+      datk = np.hstack((dagtk, daitk, daftk, daotk))
+
+      # buffer
+      dnext_atk = datk
+      dnext_at[:,b*4*H:(b+1)*4*H] = datk
+      dnext_ctk[:,b*H:(b+1)*H] = dctk
+      dnext_aitk[:,b*H:(b+1)*H] = daitk
+      dnext_aftk[:,b*H:(b+1)*H] = daftk
+      next_ftk[:,b*H:(b+1)*H] = ftk
+
+      dx[:,t,b*S:b*S+F] += np.dot(datk, Wx.T)
+      dWx += np.dot(xtk.T, datk)
+      dWh += np.dot(prev_ht.T, datk)
+      dWk += np.dot(prev_hk.T, datk)
+      db += datk.sum(axis=0)
+      dpi += np.sum(daitk * prev_c, axis=0)
+      dpf += np.sum(daftk * prev_c, axis=0)
+      dpo += np.sum(daotk * ctk, axis=0)
+  # dh0 is not important in ASR
+  for b in xrange(B-1, -1, -1):
+    dh0[:,b*H:(b+1)*H] = np.dot(dnext_at[:,b*4*H:(b+1)*4*H], Wh.T)
+  return dx, dh0, dWx, dWh, dWk, db, dpi, dpf, dpo
+
 
